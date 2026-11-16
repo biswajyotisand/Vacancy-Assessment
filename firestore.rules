@@ -1,0 +1,77 @@
+rules_version = '2';
+
+// ============================================================================
+// Vacancy Assessment Tool — Firestore Security Rules
+// Paste into Firebase Console → Firestore Database → Rules → Publish.
+// Also keep enabled: Authentication → Sign-in method → Email/Password.
+// ============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // True only after the user has clicked the link in the verification email.
+    function isVerified() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    // User profiles are private to their owners.
+    // (Written at registration, before the email is verified.)
+    match /users/{uid} {
+      allow read, create, update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // HRMS ID -> { uid, email }. A single record must be readable before login
+    // (to resolve the sign-in email); the whole collection cannot be listed.
+    match /hrmsIndex/{hrmsKey} {
+      allow get: if true;
+      allow list: if false;
+
+      allow create: if isSignedIn()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.email is string;
+
+      allow update, delete: if false;
+    }
+
+    // Vacancy assessments: private to the owner AND only for verified emails.
+    match /assessments/{assessmentId} {
+      allow create: if isVerified()
+                    && request.resource.data.uid == request.auth.uid;
+
+      allow read: if isVerified()
+                  && resource.data.uid == request.auth.uid;
+
+      allow update: if isVerified()
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.uid == request.auth.uid;
+
+      allow delete: if isVerified()
+                    && resource.data.uid == request.auth.uid;
+    }
+
+    // Cadres: shared with every VERIFIED user; only the creator can change or
+    // delete a cadre.
+    match /cadres/{cadreId} {
+      allow read: if isVerified();
+
+      allow create: if isVerified()
+                    && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if isVerified()
+                    && resource.data.createdBy == request.auth.uid
+                    && request.resource.data.createdBy == request.auth.uid;
+
+      allow delete: if isVerified()
+                    && resource.data.createdBy == request.auth.uid;
+    }
+
+    // Everything else is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
